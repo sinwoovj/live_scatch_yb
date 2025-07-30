@@ -8,8 +8,8 @@ using UnityEngine.UI;
 
 public class DrawingWithGuide : MonoBehaviour
 {
-    public const int GUIDECOUNT = 3;
-    public const int GUIDETEXTCOUNT = 3;
+    public const int GUIDECOUNT = 1;
+    public const int GUIDETEXTCOUNT = 9;
 
     [Header("Preview")]
     public Texture2D drawnTexture;
@@ -225,10 +225,12 @@ public class DrawingWithGuide : MonoBehaviour
         if (data.Count != GUIDECOUNT)
             return;
         Vector3 mousePos = cam.ScreenToWorldPoint(new Vector3(Input.mousePosition.x, Input.mousePosition.y, 0.3f));
-        
-        if (Input.mousePosition.x < (Screen.width / GUIDECOUNT)) mousePosLoc = 0;
-        else if (Input.mousePosition.x < (Screen.width / GUIDECOUNT) * 2) mousePosLoc = 1;
-        else mousePosLoc = 2;
+
+        //if (Input.mousePosition.x < (Screen.width / GUIDECOUNT)) mousePosLoc = 0;
+        //else if (Input.mousePosition.x < (Screen.width / GUIDECOUNT) * 2) mousePosLoc = 1;
+        //else mousePosLoc = 2;
+
+        mousePosLoc = 0;
 
         if (data[mousePosLoc].drawDisable || data[mousePosLoc].isFullStacked)
             return;
