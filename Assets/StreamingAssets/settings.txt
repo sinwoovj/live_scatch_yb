@@ -1,0 +1,5 @@
+SimilarityThreshold=0.33
+DrawDelay=0.2
+LineFadeInDelay=0.4
+StartWidth=0.15
+EndWidth=0.1

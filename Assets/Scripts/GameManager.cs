@@ -4,7 +4,8 @@ using UnityEngine;
 public class GameManager : MonoBehaviour
 {
     public bool isMouseVisable = false;
-    public bool isDebugMod = true;
+    public bool isDebugMod = false;
+    public bool isWindowed = true;
 
     private GUIStyle style;
 
@@ -26,6 +27,19 @@ public class GameManager : MonoBehaviour
             EditorApplication.isPlaying = false;
 #endif
             Application.Quit();
+        }
+
+        if (Input.GetKeyDown(KeyCode.F11))
+        {
+            isWindowed = !isWindowed;
+            if (isWindowed)
+            {
+                SetWindowedMode();
+            }
+            else
+            {
+                SetFullscreenWindow();
+            }
         }
 
         if (Input.GetKeyDown(KeyCode.V)) // 커서 숨기기/보이기
@@ -54,5 +68,20 @@ public class GameManager : MonoBehaviour
     public void MouseHidden(bool isMouseLock)
     {
         Cursor.visible = isMouseLock;
+    }
+
+    public void SetFullscreenWindow()
+    {
+        // 창모드 전체화면으로 전환
+        Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
+        Screen.fullScreen = true;
+    }
+
+    public void SetWindowedMode()
+    {
+        // 일반 창모드로 전환
+        Screen.fullScreenMode = FullScreenMode.Windowed;
+        Screen.fullScreen = false;
+        Screen.SetResolution(1920, 1400, false); // 해상도도 함께 설정 가능
     }
 }

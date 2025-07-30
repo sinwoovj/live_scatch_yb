@@ -8,56 +8,61 @@ using UnityEngine.UI;
 
 public class DrawingWithGuide : MonoBehaviour
 {
+    public const int GUIDECOUNT = 3;
+    public const int GUIDETEXTCOUNT = 3;
+
     [Header("Preview")]
     public Texture2D drawnTexture;
-    public Texture2D guideMask;
+
+    [Header("Texts")]
+    public List<string> texts = new List<string>{"황산","양산","금조총","물금","낙동강","조선통신사","통도사","임경대","웅상"};
 
     [Header("Options")]
-    public bool isLeft;
-    public bool isUseText; // true = Use Text , false = Use Image
     public float similarityThreshold = 0.85f; // 85% 이상일 때 이벤트 발생
-    public float imageGenerateDuration = 3f;
     public float drawDelay = 0.5f;
     public float lineFadeInDelay = 0.5f;
+    public float startWidth;
+    public float endWidth;
 
     [Header("Drawing")]
+    public int mousePosLoc;
     public GameObject lineCanvasObject;
     public Camera cam;
     public Material defaultMaterial;
     public Color startColor;
     public Color endColor;
-    public float startWidth;
-    public float endWidth;
-    private bool drawDisable = false;
-    private bool isFullStacked = false;
+    public float targetFontSize;
 
-    [Header("GuideText")]
-    public GameObject guideTextObj;
-    public GameObject subGuideTextObj;
-    public GameObject refTextObj;
-    public GameObject startPos;
-
-
+    public List<GuideData> data = new List<GuideData>();
     [System.Serializable]
-    public class GuideTextData
+    public class GuideData
     {
-        public string guideText;
-        public string subGuideText;
-        public string moveText;
-        public GameObject endPos;
+        public int curIndex;
+        public int guideNum;
+        public string layerName;
+        public Texture2D guideMask;
+        public GameObject guideTextObj;
+        public GameObject refTextObj;
         public GameObject moveTextObj;
-        public float originalMoveTextFontSize;
-        public Color originalMoveTextColor;
-        public bool isAvailable;
-        public bool isComplete;
-    }
-    public List<GuideTextData> data;
-    private int curIndex;
-    //public Camera textRenderCamera;
-    //public RenderTexture textRT; // UI에 표시된 가이드 텍스트 텍스쳐
+        public List<GuideTextData> textData = new List<GuideTextData>();
 
-    //[Header("GuideImage")]
-    //public RawImage guideImage; // UI에 표시된 가이드 이미지
+        [System.Serializable]
+        public class GuideTextData
+        {
+            public string text;
+            public bool isAvailable;
+            public bool isComplete;
+        }
+
+        public bool isGuideCompleted = false;
+        public bool drawDisable = false;
+        public bool isFullStacked = false;
+    }
+
+    public GameObject endPos;
+    public float originalMoveTextFontSize = 150f;
+    public Color originalMoveTextColor = Color.black;
+
     [HideInInspector]
     public UnityEvent CharacterFillEvent;
 
@@ -65,12 +70,10 @@ public class DrawingWithGuide : MonoBehaviour
     private int positionCount = 2;
     private Vector3 prevPos = Vector3.zero;
 
-    public List<GameObject> drawnLines = new List<GameObject>();
-    private Stack<GameObject> undoStack = new Stack<GameObject>();
-    private Stack<GameObject> redoStack = new Stack<GameObject>();
+    public List<List<GameObject>> drawnLinesList = new List<List<GameObject>>() {new List<GameObject>(), new List<GameObject>(), new List<GameObject>()};
+    private List<Stack<GameObject>> undoStackList = new List<Stack<GameObject>>() { new Stack<GameObject>(), new Stack<GameObject>(), new Stack<GameObject>() };
+    private List<Stack<GameObject>> redoStackList = new List<Stack<GameObject>>() { new Stack<GameObject>(), new Stack<GameObject>(), new Stack<GameObject>() };
     public const int maxUndoCount = 20;
-
-
 
     private void Start()
     {
@@ -78,15 +81,32 @@ public class DrawingWithGuide : MonoBehaviour
         {
             CharacterFillEvent = new UnityEvent();
         }
-        for (int i = 0; i < data.Count; i++)
+
+        data.Clear();
+
+        //개별
+        for (int i = 0; i < GUIDECOUNT; i++)
         {
-            data[i].isAvailable = true;
-            data[i].isComplete = false;
-            data[i].moveTextObj.SetActive(false);
-            data[i].originalMoveTextFontSize = data[i].moveTextObj.GetComponent<TextMeshProUGUI>().fontSize;
-            data[i].originalMoveTextColor = data[i].moveTextObj.GetComponent<TextMeshProUGUI>().color;
-        }        
-        SetTexts();
+            data.Add(new GuideData());
+            GuideData d = data[i];
+            d.guideNum = i;
+            d.layerName = "Guide" + (i + 1).ToString();
+            d.guideTextObj = GameObject.Find("GuideText" + (i + 1).ToString());
+            d.refTextObj = GameObject.Find("RefText" + (i + 1).ToString());
+            d.moveTextObj = GameObject.Find("MoveText" + (i + 1).ToString());
+            d.moveTextObj.GetComponent<TextMeshProUGUI>().color = Color.clear;
+
+            for (int j = 0; j < GUIDETEXTCOUNT; j++)
+            {
+                data[i].textData.Add(new GuideData.GuideTextData());
+                GuideData.GuideTextData dt = data[i].textData[j];
+                dt.text = texts[j + i * GUIDETEXTCOUNT];
+                dt.isAvailable = true;
+                dt.isComplete = false;
+            }
+            SetTexts(i);
+        }  
+        ChangeLoadSettingsValues();
         CharacterFillEvent.AddListener(OnCharacterFillSuccess);
     }
     void Update()
@@ -95,60 +115,24 @@ public class DrawingWithGuide : MonoBehaviour
         HandleInput();
     }
 
-    //손봐야함 (같은거 겹치면 안됨 + 아래 내용 참고)
-    //한자가 써지면 올라가고 이후 만약 사라지는 시간이 다지나도 
-    //모두 적혔으면 그냥 비워두고 시간지나면 다시 가능한것만 바로 쓸수 있도록 생김
-    void SetTexts()
-    {
-        List<GuideTextData> filtered = data.Where(obj => { return obj.isAvailable; }).ToList();
-        if (filtered.Count <= 0) { isFullStacked = true; return; }
-        GuideTextData curGuideTextData = filtered[Random.Range(0, filtered.Count)];
-        curIndex = data.IndexOf(curGuideTextData);
-        data[curIndex].isAvailable = false;
-        guideTextObj.GetComponent<TextMeshProUGUI>().text = data[curIndex].guideText;
-        subGuideTextObj.GetComponent<TextMeshProUGUI>().text = data[curIndex].subGuideText;
-        //data[curIndex].moveTextObj.GetComponent<TextMeshProUGUI>().text = data[curIndex].moveText;
-        refTextObj.GetComponent<TextMeshProUGUI>().text = data[curIndex].moveText;
-    }
 
     void OnCharacterFillSuccess()
     {
-        drawDisable = true;
+        data[mousePosLoc].isGuideCompleted = true;
+        data[mousePosLoc].drawDisable = true;
         Debug.Log("Character filled successfully!");
-        ClearAllLines();
-        //StartCoroutine(FadeInAlpha(guideImage, imageGenerateDuration)); // not use now
-        //cam.cullingMask |= (1 << LayerMask.NameToLayer(gameObject.name)); // not use now
-        data[curIndex].isComplete = true;
-        StartCoroutine(MoveTextAndBigger(4.0f, 0.8f));
+        ClearAllLines(mousePosLoc);
+        data[mousePosLoc].textData[data[mousePosLoc].curIndex].isComplete = true;
+        data[mousePosLoc].moveTextObj.GetComponent<TextMeshProUGUI>().text = data[mousePosLoc].textData[data[mousePosLoc].curIndex].text;
+        StartCoroutine(MoveTextAndBigger(mousePosLoc, 4.0f));
     }
 
-    //public IEnumerator FadeInAlpha(RawImage targetImage, float duration)
-    //{
-    //    Color startColor = targetImage.color;
-    //    float startAlpha = startColor.a;
-    //    float endAlpha = 1f;
 
-    //    float elapsed = 0f;
-
-    //    while (elapsed < duration)
-    //    {
-    //        elapsed += Time.deltaTime;
-    //        float t = Mathf.Clamp01(elapsed / duration);
-    //        float newAlpha = Mathf.Lerp(startAlpha, endAlpha, t);
-    //        targetImage.color = new Color(startColor.r, startColor.g, startColor.b, newAlpha);
-    //        yield return null;
-    //    }
-
-    //    // 보정: 완전히 1로 설정
-    //    targetImage.color = new Color(startColor.r, startColor.g, startColor.b, endAlpha);
-    //}
-
-    public IEnumerator MoveTextAndBigger(float duration, float biggerCoefficient)
+    public IEnumerator MoveTextAndBigger(int guideNum, float duration)
     {
-        data[curIndex].moveTextObj.SetActive(true);
-        RectTransform rectTransform = data[curIndex].moveTextObj.GetComponent<RectTransform>();
-        rectTransform.anchoredPosition = startPos.GetComponent<RectTransform>().anchoredPosition;
-        float targetFontSize = data[curIndex].originalMoveTextFontSize * biggerCoefficient;
+        data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().color = Color.black;
+        RectTransform rectTransform = data[guideNum].moveTextObj.GetComponent<RectTransform>();
+        rectTransform.anchoredPosition = data[guideNum].refTextObj.GetComponent<RectTransform>().anchoredPosition;
 
         float elapsed = 0f;
 
@@ -157,47 +141,72 @@ public class DrawingWithGuide : MonoBehaviour
             float t = elapsed / duration;
 
             // Position Lerp
-            rectTransform.anchoredPosition = Vector2.Lerp(startPos.GetComponent<RectTransform>().anchoredPosition, data[curIndex].endPos.GetComponent<RectTransform>().anchoredPosition, t);
-            data[curIndex].moveTextObj.GetComponent<TextMeshProUGUI>().color = new Color(data[curIndex].moveTextObj.GetComponent<TextMeshProUGUI>().color.r,
-            data[curIndex].moveTextObj.GetComponent<TextMeshProUGUI>().color.g, data[curIndex].moveTextObj.GetComponent<TextMeshProUGUI>().color.b, Mathf.Lerp(128 / 255, 255 / 255, t));
+            rectTransform.anchoredPosition = Vector2.Lerp(data[guideNum].refTextObj.GetComponent<RectTransform>().anchoredPosition, endPos.GetComponent<RectTransform>().anchoredPosition, t);
+            data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().color = new Color(data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().color.r,
+            data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().color.g, data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().color.b, Mathf.Lerp(128 / 255, 255 / 255, t));
             // Font size Lerp
-            data[curIndex].moveTextObj.GetComponent<TextMeshProUGUI>().fontSize = Mathf.Lerp(data[curIndex].originalMoveTextFontSize, targetFontSize, t);
+            data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().fontSize = Mathf.Lerp(originalMoveTextFontSize, targetFontSize, t);
 
             elapsed += Time.deltaTime;
             yield return null;
         }
 
         // Ensure final values are set
-        rectTransform.anchoredPosition = data[curIndex].endPos.GetComponent<RectTransform>().anchoredPosition;
-        data[curIndex].moveTextObj.GetComponent<TextMeshProUGUI>().fontSize = targetFontSize;
-        drawDisable = false;
-        StartCoroutine(WaitThenResetMoveText(20.0f, curIndex)); //duration이 지나면 무브 텍스트 리셋
-        SetTexts(); // 랜덤으로 리스트에 있는 텍스트 중 하나로 변경
+        rectTransform.anchoredPosition = endPos.GetComponent<RectTransform>().anchoredPosition;
+        data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().fontSize = targetFontSize;
+        data[guideNum].drawDisable = false;
+        StartCoroutine(WaitThenResetMoveText(20.0f, guideNum, data[guideNum].curIndex)); //duration이 지나면 무브 텍스트 리셋
+        SetTexts(guideNum); // 랜덤으로 리스트에 있는 텍스트 중 하나로 변경
     }
-    public IEnumerator WaitThenResetMoveText(float duration, int idx)
+    void SetTexts(int guideNum)
     {
-        yield return new WaitForSeconds(duration);
+        List<GuideData.GuideTextData> filtered = data[guideNum].textData.Where(d => d.isAvailable == true).ToList();
+        if (filtered.Count <= 0)
+        {
+            data[guideNum].isFullStacked = true;
+            return;
+        }
+        //index 결정
+        GuideData.GuideTextData curGuideTextData = filtered[Random.Range(0, filtered.Count)];
+        data[guideNum].curIndex = data[guideNum].textData.IndexOf(curGuideTextData);
+        curGuideTextData.isAvailable = false;
+        data[guideNum].guideTextObj.GetComponent<TextMeshProUGUI>().text = curGuideTextData.text;
+        data[guideNum].refTextObj.GetComponent<TextMeshProUGUI>().text = curGuideTextData.text;
+    }
+
+    public IEnumerator WaitThenResetMoveText(float duration, int guideNum, int guideTextIndex)
+    {
+        float currTime = 0f;
+        while (currTime < duration)
+        {
+            if(data.Where(d=> d.isGuideCompleted == true && d != data[guideNum]).ToList().Count > 0)
+                break;
+            currTime += Time.deltaTime;
+            yield return null;
+        }
+        data[guideNum].isGuideCompleted = false;
 
         // 무브 텍스트 초기화
-        ResetMoveText(idx);
-        isFullStacked = false;
+        ResetMoveText(guideNum, guideTextIndex);
+        data[guideNum].isFullStacked = false;
     }
 
-    public void ResetMoveText(int idx)
+    public void ResetMoveText(int guideNum, int guideTextIndex)
     {
-        data[idx].isAvailable = true;
-        data[idx].isComplete = false;
-        data[idx].moveTextObj.SetActive(false);
-        data[idx].moveTextObj.GetComponent<TextMeshProUGUI>().fontSize = data[curIndex].originalMoveTextFontSize; //폰트사이즈 원래대로
-        data[idx].moveTextObj.GetComponent<TextMeshProUGUI>().color = data[curIndex].originalMoveTextColor;
-        data[idx].moveTextObj.GetComponent<RectTransform>().anchoredPosition = startPos.GetComponent<RectTransform>().anchoredPosition;
+        data[guideNum].textData[guideTextIndex].isAvailable = true;
+        data[guideNum].textData[guideTextIndex].isComplete = false;
+        data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().text = data[guideNum].textData[data[guideNum].curIndex].text;
+        data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().color = Color.clear;
+        data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().fontSize = originalMoveTextFontSize; //폰트사이즈 원래대로
+        data[guideNum].moveTextObj.GetComponent<TextMeshProUGUI>().color = originalMoveTextColor;
+        data[guideNum].moveTextObj.GetComponent<RectTransform>().anchoredPosition = data[guideNum].refTextObj.GetComponent<RectTransform>().anchoredPosition;
     }
 
     void HandleInput()
     {
         if (Input.GetKeyDown(KeyCode.Delete))
         {
-            ClearAllLines();
+            for(int i = 0; i < GUIDECOUNT; i++) ClearAllLines(i);
         }
 
         if (Input.GetKeyDown(KeyCode.LeftArrow))
@@ -213,32 +222,30 @@ public class DrawingWithGuide : MonoBehaviour
 
     void DrawMouse()
     {
-        Vector3 mousePos = cam.ScreenToWorldPoint(new Vector3(Input.mousePosition.x, Input.mousePosition.y, 0.3f));
-        bool mousePosIsLeft = Input.mousePosition.x < (Screen.width / 2) - (Screen.width / 11.3) ? true : false;
-        //Debug.Log(Screen.width + " : " + Input.mousePosition.x);
-        if (drawDisable || isFullStacked)
+        if (data.Count != GUIDECOUNT)
             return;
-        if (mousePosIsLeft == isLeft)
+        Vector3 mousePos = cam.ScreenToWorldPoint(new Vector3(Input.mousePosition.x, Input.mousePosition.y, 0.3f));
+        
+        if (Input.mousePosition.x < (Screen.width / GUIDECOUNT)) mousePosLoc = 0;
+        else if (Input.mousePosition.x < (Screen.width / GUIDECOUNT) * 2) mousePosLoc = 1;
+        else mousePosLoc = 2;
+
+        if (data[mousePosLoc].drawDisable || data[mousePosLoc].isFullStacked)
+            return;
+
+        if (data[mousePosLoc].textData.Where(d => d.isComplete == true).ToList().Count < data[mousePosLoc].textData.Count)
         {
-            if(data.Where(obj => { return obj.isComplete; }).ToList().Count < data.Count)
+            if (Input.GetMouseButtonDown(0))
             {
-                if (Input.GetMouseButtonDown(0))
-                {
-                    //if ((cam.cullingMask & (1 << LayerMask.NameToLayer(gameObject.name))) != 0) //사이클 한번 돌고 초기화하는 시점
-                    //{
-                    //    //cam.cullingMask &= ~(1 << LayerMask.NameToLayer(gameObject.name)); //쿨링마스크에서 가이드텍스트 제거 // not use now
-                    //    ResetMoveText(); // MoveText 위치, 색, 폰트사이즈 원래대로 되돌림
-                    //}
-                    RequestCreateLine(mousePos);
-                }
-                else if (Input.GetMouseButton(0))
-                {
-                    RequestConnectLine(mousePos);
-                }
-                else if (Input.GetMouseButtonUp(0)) // 마우스 왼쪽 버튼을 땔 때마다 유사도 확인
-                {
-                    CheckSimilarity();
-                }
+                RequestCreateLine(mousePos);
+            }
+            else if (Input.GetMouseButton(0))
+            {
+                RequestConnectLine(mousePos);
+            }
+            else if (Input.GetMouseButtonUp(0))
+            {
+                CheckSimilarity(mousePosLoc);
             }
         }
     }
@@ -257,7 +264,7 @@ public class DrawingWithGuide : MonoBehaviour
     void CreateLine(Vector3 mousePos)
     {
         positionCount = 2;
-        GameObject line = new GameObject("Line" + (isLeft ? "Left" : "Right"));
+        GameObject line = new GameObject("Line_" + mousePosLoc);
         line.transform.SetParent(lineCanvasObject.transform, false); // false: 로컬 좌표 유지
         LineRenderer lineRend = line.AddComponent<LineRenderer>();
 
@@ -281,16 +288,16 @@ public class DrawingWithGuide : MonoBehaviour
         curLine = lineRend;
 
         // 선 생성 시 저장
-        drawnLines.Add(line);
-        undoStack.Push(line);
-        if (undoStack.Count > maxUndoCount)
+        drawnLinesList[mousePosLoc].Add(line);
+        undoStackList[mousePosLoc].Push(line);
+        if (undoStackList[mousePosLoc].Count > maxUndoCount)
         {
-            GameObject oldest = undoStack.ToArray()[undoStack.Count - 1];
-            undoStack = new Stack<GameObject>(new Stack<GameObject>(undoStack).ToArray()[..maxUndoCount]);
+            GameObject oldest = undoStackList[mousePosLoc].ToArray()[undoStackList[mousePosLoc].Count - 1];
+            undoStackList[mousePosLoc] = new Stack<GameObject>(new Stack<GameObject>(undoStackList[mousePosLoc]).ToArray()[..maxUndoCount]);
             Destroy(oldest);
         }
 
-        redoStack.Clear(); // 새로운 선을 그리면 redo 초기화
+        redoStackList[mousePosLoc].Clear(); // 새로운 선을 그리면 redo 초기화
         StartCoroutine(FadeInLine(lineRend, lineFadeInDelay)); // 0.5초 동안 페이드 인
     }
 
@@ -346,80 +353,35 @@ public class DrawingWithGuide : MonoBehaviour
         }
     }
 
-    void CheckSimilarity()
+    void CheckSimilarity(int guideNum)
     {
-        StartCoroutine(CaptureAndCompare());
+        StartCoroutine(CaptureAndCompare(guideNum));
     }
 
-    System.Collections.IEnumerator CaptureAndCompare()
+    System.Collections.IEnumerator CaptureAndCompare(int guideNum)
     {
         yield return new WaitForEndOfFrame();
 
         // 1. 라인 렌더링 결과 캡처
         drawnTexture = GetTextAsTexture("Lines");
-
-        if (isUseText)
+        // 2. 가이드 이미지/텍스트 텍스쳐 가져오기
+        data[guideNum].guideMask = GetTextAsTexture(data[guideNum].layerName);
+        if (data[guideNum].guideMask == null)
         {
-            // 2. 가이드 이미지/텍스트 텍스쳐 가져오기
-            guideMask = GetTextAsTexture(gameObject.name);
-            if (guideMask == null)
-            {
-                Debug.LogWarning("Guide texture not assigned.");
-                yield break;
-            }
-
-            // 3. 유사도 계산
-            float similarity = CompareTextures(drawnTexture, guideMask);
-            Debug.Log($"Similarity: {similarity * 100f:F2}%");
-
-            // 4. 이벤트 발생
-            if (similarity >= similarityThreshold)
-            {
-                CharacterFillEvent?.Invoke();
-            }
+            Debug.LogWarning("Guide texture not assigned.");
+            yield break;
         }
-        //else
-        //{
-        //    // 2. 가이드 이미지/텍스트 텍스쳐 가져오기
-        //    Texture2D guideTexture = guideImage.texture as Texture2D;
-        //    if (guideTexture == null)
-        //    {
-        //        Debug.LogWarning("Guide texture not assigned.");
-        //        yield break;
-        //    }
 
-        //    // 3. 유사도 계산
-        //    float similarity = CompareTextures(drawnTexture, guideTexture);
-        //    Debug.Log($"Similarity: {similarity * 100f:F2}%");
+        // 3. 유사도 계산
+        float similarity = CompareTextures(drawnTexture, data[guideNum].guideMask);
+        Debug.Log($"Similarity: {similarity * 100f:F2}%");
 
-        //    // 4. 이벤트 발생
-        //    if (similarity >= similarityThreshold)
-        //    {
-        //        CharacterFillEvent?.Invoke();
-        //    }
-        //}
+        // 4. 이벤트 발생
+        if (similarity >= similarityThreshold)
+        {
+            CharacterFillEvent?.Invoke();
+        }
     }
-
-    //아래 코드는 색깔까지 같아야함
-    //float CompareTextures(Texture2D texA, Texture2D texB)
-    //{
-    //    int width = Mathf.Min(texA.width, texB.width);
-    //    int height = Mathf.Min(texA.height, texB.height);
-
-    //    Color[] pixelsA = texA.GetPixels(0, 0, width, height);
-    //    Color[] pixelsB = texB.GetPixels(0, 0, width, height);
-
-    //    int matchCount = 0;
-    //    for (int i = 0; i < pixelsA.Length; i++)
-    //    {
-    //        if (Vector4.Distance(pixelsA[i].linear, pixelsB[i].linear) < 0.2f) // 유사한 색상
-    //        {
-    //            matchCount++;
-    //        }
-    //    }
-
-    //    return (float)matchCount / pixelsA.Length;
-    //}
 
     public Texture2D GetTextAsTexture(string layer)
     {
@@ -427,7 +389,7 @@ public class DrawingWithGuide : MonoBehaviour
         //cam.cullingMask = ~(1 << LayerMask.NameToLayer("Lines")); //마스크 제거
 
         // 1. 텍스트 렌더링 결과 캡처
-        RenderTexture rt = new RenderTexture(1920, 1080, 24);
+        RenderTexture rt = new RenderTexture(1920, 1400, 24);
         cam.targetTexture = rt;
 
         // 원래 cullingMask 백업
@@ -497,38 +459,45 @@ public class DrawingWithGuide : MonoBehaviour
         return color.r * 0.299f + color.g * 0.587f + color.b * 0.114f;
     }
 
-    void ClearAllLines()
+    void ClearAllLines(int guideNum)
     {
-        foreach (GameObject line in drawnLines)
+        foreach (GameObject line in drawnLinesList[guideNum])
         {
             Destroy(line);
         }
-        drawnLines.Clear();
-        undoStack.Clear();
-        redoStack.Clear();
+        drawnLinesList[guideNum].Clear();
+        undoStackList[guideNum].Clear();
+        redoStackList[guideNum].Clear();
     }
 
     void Undo()
     {
-        if (undoStack.Count > 0)
+        if (undoStackList[mousePosLoc].Count > 0)
         {
-            GameObject lastLine = undoStack.Pop();
+            GameObject lastLine = undoStackList[mousePosLoc].Pop();
             lastLine.SetActive(false);
-            redoStack.Push(lastLine);
-            drawnLines.Remove(lastLine);
+            redoStackList[mousePosLoc].Push(lastLine);
+            drawnLinesList[mousePosLoc].Remove(lastLine);
         }
     }
 
     void Redo()
     {
-        if (redoStack.Count > 0)
+        if (redoStackList[mousePosLoc].Count > 0)
         {
-            GameObject line = redoStack.Pop();
+            GameObject line = redoStackList[mousePosLoc].Pop();
             line.SetActive(true);
-            undoStack.Push(line);
-            drawnLines.Add(line);
+            undoStackList[mousePosLoc].Push(line);
+            drawnLinesList[mousePosLoc].Add(line);
         }
     }
+    
+    public void ChangeLoadSettingsValues()
+    {
+        similarityThreshold = SettingsLoader.Instance.GetSetting("SimilarityThreshold", 0.33f);
+        drawDelay = SettingsLoader.Instance.GetSetting("DrawDelay", 0.2f);
+        lineFadeInDelay = SettingsLoader.Instance.GetSetting("LineFadeInDelay", 0.4f);
+        startWidth = SettingsLoader.Instance.GetSetting("StartWidth", 0.15f);
+        endWidth = SettingsLoader.Instance.GetSetting("EndWidth", 0.1f);
+    }
 }
-
-// 공백 문자 사이트 : https://wepplication.github.io/tools/charMap/#unicode-2150-218F
